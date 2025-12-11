@@ -467,17 +467,22 @@ function writeBiomeConfig(projectType) {
   logger.success(`Created biome.json for project type: ${projectType}`)
 }
 
-function updatePackageJsonScripts() {
+function updatePackageJsonScripts(pmConfig) {
   const pkg = readPackageJson()
   pkg.scripts = pkg.scripts || {}
 
   const isTs = isTypescriptProject(pkg)
 
+  console.log("")
+  logger.step(
+    `Adding scripts using package manager: ${chalk.bold(pmConfig.id)}`,
+  )
+
   if (isTs) {
     pkg.scripts["type-check"] = "tsc -b --noEmit"
-    pkg.scripts.lint =
-      "biome lint --diagnostic-level=error --no-errors-on-unmatched && type-check"
-    pkg.scripts["lint:fix"] = "biome check --write --unsafe && type-check"
+    pkg.scripts.lint = `biome lint --diagnostic-level=error --no-errors-on-unmatched && ${pmConfig.id} type-check`
+    pkg.scripts["lint:fix"] =
+      `biome check --write --unsafe && ${pmConfig.id} type-check`
   } else {
     pkg.scripts.lint =
       "biome lint --diagnostic-level=error --no-errors-on-unmatched"
@@ -636,7 +641,7 @@ async function main() {
 
     installBiome(pmConfig)
     writeBiomeConfig(projectType)
-    updatePackageJsonScripts()
+    updatePackageJsonScripts(pmConfig)
 
     let commentStats = {
       filesScanned: 0,
