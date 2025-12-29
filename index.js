@@ -479,7 +479,7 @@ function updatePackageJsonScripts(pmConfig) {
   )
 
   if (isTs) {
-    pkg.scripts["type-check"] = "tsc -b --noEmit"
+    pkg.scripts["type-check"] = "tsc --noEmit"
     pkg.scripts.lint = `biome lint --diagnostic-level=error --no-errors-on-unmatched && ${pmConfig.id} run type-check`
     pkg.scripts["lint:fix"] =
       `biome check --write --unsafe && ${pmConfig.id} run type-check`
