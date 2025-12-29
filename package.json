@@ -28,6 +28,9 @@
   },
   "license": "MIT",
   "packageManager": "pnpm@10.17.1",
+  "repository": {
+    "url": "https://github.com/herowcode/biome-setup"
+  },
   "dependencies": {
     "chalk": "^5.6.2",
     "inquirer": "^13.0.2"
