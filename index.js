@@ -80,6 +80,25 @@ function inferProjectType(pkg) {
   return PROJECT_TYPE.node
 }
 
+function hasNextJsDependency(pkg) {
+  const dependencyFields = [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]
+
+  return dependencyFields.some((field) => Boolean(pkg[field]?.next))
+}
+
+function hasNextBuildDirectory() {
+  return fs.existsSync(path.join(PROJECT_ROOT, ".next"))
+}
+
+function shouldIgnoreNextDirectory(pkg) {
+  return hasNextBuildDirectory() || hasNextJsDependency(pkg)
+}
+
 const LEGACY_TOOL_PATTERN = /(eslint|prettier)/i
 
 const CODE_EXTENSIONS = new Set([
@@ -100,7 +119,6 @@ const IGNORED_DIRECTORIES = new Set([
   "dist",
   "build",
   "coverage",
-  ".next",
   ".turbo",
   ".cache",
   ".vscode",
@@ -320,7 +338,19 @@ function installBiome(pmConfig) {
   runCommand(command)
 }
 
-function createBiomeConfig(projectType) {
+function createBiomeConfig(projectType, options = {}) {
+  const includes = [
+    "**",
+    "!**/dist/**",
+    "!**/node_modules/**",
+    "!**/.git/**",
+    "!**/coverage/**",
+  ]
+
+  if (options.ignoreNextDirectory) {
+    includes.push("!**/.next/**")
+  }
+
   const baseConfig = {
     // biome-ignore lint/style/useNamingConvention: ignore schema property
     $schema: BIOME_SCHEMA_URL,
@@ -396,13 +426,7 @@ function createBiomeConfig(projectType) {
       },
     },
     files: {
-      includes: [
-        "**",
-        "!**/dist/**",
-        "!**/node_modules/**",
-        "!**/.git/**",
-        "!**/coverage/**",
-      ],
+      includes,
     },
     assist: {
       actions: {
@@ -462,7 +486,10 @@ function writeBiomeConfig(projectType) {
     return
   }
 
-  const config = createBiomeConfig(projectType)
+  const pkg = readPackageJson()
+  const config = createBiomeConfig(projectType, {
+    ignoreNextDirectory: shouldIgnoreNextDirectory(pkg),
+  })
   fs.writeFileSync(PATHS.biomeConfig, `${JSON.stringify(config, null, 2)}\n`)
   logger.success(`Created biome.json for project type: ${projectType}`)
 }
@@ -493,7 +520,11 @@ function updatePackageJsonScripts(pmConfig) {
   logger.success("Added scripts to package.json: lint, lint:fix")
 }
 
-function shouldIgnoreDir(dirName) {
+function shouldIgnoreDir(dirName, pkg) {
+  if (dirName === ".next") {
+    return shouldIgnoreNextDirectory(pkg)
+  }
+
   return IGNORED_DIRECTORIES.has(dirName)
 }
 
@@ -520,6 +551,7 @@ function stripEslintCommentsFromContent(content) {
 }
 
 function walkAndCleanComments(rootDir) {
+  const pkg = readPackageJson()
   let filesScanned = 0
   let filesTouched = 0
   let totalCommentsRemoved = 0
@@ -531,7 +563,7 @@ function walkAndCleanComments(rootDir) {
       const entryPath = path.join(directory, entry.name)
 
       if (entry.isDirectory()) {
-        if (shouldIgnoreDir(entry.name)) return
+        if (shouldIgnoreDir(entry.name, pkg)) return
         walk(entryPath)
         return
       }
