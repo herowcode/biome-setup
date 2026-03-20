@@ -552,10 +552,10 @@ function createBiomeConfig(projectType, options = {}) {
       indentWidth: 2,
       lineWidth: 80,
       ...(() => {
-        const ignore = []
-        if (options.ignoreNextDirectory) ignore.push("**/.next/**")
-        if (options.fracturedJson) ignore.push("**/*.json", "**/*.jsonc")
-        return ignore.length > 0 ? { ignore } : {}
+        const formatterIncludes = []
+        if (options.ignoreNextDirectory) formatterIncludes.push("!**/.next/**")
+        if (options.fracturedJson) formatterIncludes.push("!**/*.json", "!**/*.jsonc")
+        return formatterIncludes.length > 0 ? { includes: formatterIncludes } : {}
       })(),
     },
     javascript: {
