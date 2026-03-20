@@ -1,6 +1,6 @@
 # biome-setup
 
-An interactive CLI tool to help you migrate from ESLint and Prettier to [Biome](https://biomejs.dev) in your React or Node.js projects.
+An interactive CLI tool to help you migrate from ESLint and Prettier to [Biome](https://biomejs.dev) in your React or Node.js projects — or upgrade an existing Biome installation to the latest version.
 
 ## About Biome
 
@@ -11,6 +11,7 @@ Biome is a fast toolchain for the web that replaces ESLint, Prettier, and other 
 - 🚀 **Interactive Setup**: Walk through a guided setup process for your project
 - ⚡ **Fast**: Leverages Biome's Rust-based engine for rapid linting and formatting
 - 🔄 **Easy Migration**: Seamlessly migrate from ESLint/Prettier to Biome
+- ⬆️ **Upgrade Detection**: Detects existing Biome installations and offers to upgrade the version, with the option to keep your current config or overwrite it with the recommended setup
 - ⚙️ **Project Detection**: Automatically detects your project type (React or Node.js)
 - 🎯 **TypeScript Support**: Full TypeScript support for modern projects
 
@@ -30,11 +31,19 @@ Run the tool in your project root directory:
 npx @herowcode/biome-setup
 ```
 
+### New project (no Biome installed)
+
 The tool will guide you through:
-1. Selecting your project type (React or Node.js)
-2. Choosing configuration options
-3. Generating a `biome.json` configuration file
-4. Setting up your project to use Biome
+1. Detecting your project type (React or Node.js) and package manager
+2. Removing ESLint/Prettier packages and directive comments
+3. Installing Biome and generating a `biome.json` configuration file
+4. Updating `package.json` scripts and running an initial lint fix
+
+### Existing Biome project
+
+If Biome is already installed, the tool detects the current version and offers:
+- **Update version only** — upgrades the `@biomejs/biome` dependency and updates the `$schema` URL in your existing `biome.json`, keeping all your custom rules intact
+- **Update version + overwrite config** — upgrades the dependency and replaces `biome.json` with the recommended opinionated configuration
 
 ## Available Scripts
 

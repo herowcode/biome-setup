@@ -268,6 +268,24 @@ function printBanner() {
   console.log("")
 }
 
+function findExistingBiome(pkg) {
+  const dependencyFields = [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]
+
+  for (const field of dependencyFields) {
+    const deps = pkg[field]
+    if (deps?.["@biomejs/biome"]) {
+      return deps["@biomejs/biome"].replace(/^[\^~>=<]*/, "")
+    }
+  }
+
+  return null
+}
+
 function findLegacyTools(pkg) {
   const legacy = new Set()
   const dependencyFields = [
@@ -615,6 +633,80 @@ function printSummary(pmConfig, projectType, legacyPackages, commentStats) {
   console.log("")
 }
 
+async function promptForUpgrade(currentVersion) {
+  return inquirer.prompt([
+    {
+      type: "list",
+      name: "upgradeMode",
+      message: `Biome ${currentVersion} is already installed. How would you like to upgrade to ${BIOME_VERSION}?`,
+      choices: [
+        {
+          name: "Update version only (keep current biome.json)",
+          value: "version",
+        },
+        {
+          name: "Update version and overwrite biome.json with recommended config",
+          value: "full",
+        },
+        {
+          name: "Cancel",
+          value: "cancel",
+        },
+      ],
+    },
+  ])
+}
+
+async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
+  const projectType = inferProjectType(pkg)
+
+  installBiome(pmConfig)
+
+  if (upgradeMode === "full") {
+    const config = createBiomeConfig(projectType, {
+      ignoreNextDirectory: shouldIgnoreNextDirectory(pkg),
+    })
+    fs.writeFileSync(PATHS.biomeConfig, `${JSON.stringify(config, null, 2)}\n`)
+    logger.success(`Overwrote biome.json for project type: ${projectType}`)
+  } else {
+    if (fs.existsSync(PATHS.biomeConfig)) {
+      try {
+        const raw = fs.readFileSync(PATHS.biomeConfig, "utf8")
+        const config = JSON.parse(raw)
+        if (config.$schema) {
+          config.$schema = BIOME_SCHEMA_URL
+          fs.writeFileSync(
+            PATHS.biomeConfig,
+            `${JSON.stringify(config, null, 2)}\n`,
+          )
+          logger.success("Updated $schema URL in biome.json")
+        }
+      } catch (_) {
+        logger.warn("Could not update $schema in biome.json — skipping.")
+      }
+    }
+  }
+
+  updatePackageJsonScripts(pmConfig)
+
+  logger.step("Running lint:fix to apply Biome fixes...")
+  runCommand(pmConfig.lint.fix)
+  logger.success("Completed lint:fix.")
+
+  console.log("")
+  console.log(chalk.cyan("==============================================="))
+  console.log(chalk.cyan("                    Summary"))
+  console.log(chalk.cyan("==============================================="))
+  console.log("")
+  console.log(`Project type: ${projectType}`)
+  console.log(`Package manager: ${pmConfig.id}`)
+  console.log(`Biome upgraded: ${chalk.yellow(pkg._biomeCurrentVersion)} → ${chalk.green(BIOME_VERSION)}`)
+  console.log(
+    `Config: ${upgradeMode === "full" ? "overwritten with recommended config" : "kept existing (schema URL updated)"}`,
+  )
+  console.log("")
+}
+
 async function promptForSetup(legacyPackages) {
   return inquirer.prompt([
     {
@@ -638,12 +730,41 @@ async function main() {
   try {
     const pkg = readPackageJson()
     const pmConfig = detectPackageManager()
-    const legacyPackages = findLegacyTools(pkg)
-    const projectType = inferProjectType(pkg)
+    const existingBiomeVersion = findExistingBiome(pkg)
 
     printBanner()
 
     logger.info(`Detected package manager: ${chalk.bold(pmConfig.id)}`)
+
+    if (existingBiomeVersion) {
+      if (existingBiomeVersion === BIOME_VERSION) {
+        logger.success(
+          `Biome is already at version ${BIOME_VERSION}. Nothing to upgrade.`,
+        )
+        return
+      }
+
+      logger.info(
+        `Found existing Biome installation: ${chalk.bold(existingBiomeVersion)}`,
+      )
+      logger.info(`Latest version: ${chalk.bold(BIOME_VERSION)}`)
+      console.log("")
+
+      const { upgradeMode } = await promptForUpgrade(existingBiomeVersion)
+
+      if (upgradeMode === "cancel") {
+        logger.info("Upgrade cancelled.")
+        return
+      }
+
+      pkg._biomeCurrentVersion = existingBiomeVersion
+      await runUpgradeFlow(pmConfig, pkg, upgradeMode)
+      return
+    }
+
+    const legacyPackages = findLegacyTools(pkg)
+    const projectType = inferProjectType(pkg)
+
     logger.info(
       `Found ESLint/Prettier related packages: ${chalk.bold(
         String(legacyPackages.length),
