@@ -54,7 +54,13 @@ When enabled, [FracturedJson](https://github.com/j-brooke/FracturedJsonJs) forma
 - Table-like alignment of object fields
 - Compact multi-item array rows
 
-Biome's JSON **linting** remains active, but JSON **formatting** is delegated to FracturedJson by adding `*.json` and `*.jsonc` to the Biome formatter's ignore list.
+The tool will:
+1. Install `fracturedjsonjs` as a devDependency in your project
+2. Generate a `format-json.js` script in your project root
+3. Append `&& node format-json.js` to the `lint:fix` script so JSON formatting runs automatically
+4. Add `*.json` and `*.jsonc` to Biome's `formatter.ignore` to avoid conflicts
+
+Biome's JSON **linting** remains active — only **formatting** is delegated to FracturedJson.
 
 ## Available Scripts
 
@@ -96,8 +102,8 @@ You can manually edit the `biome.json` file to customize Biome's behavior for yo
 
 - **chalk**: Terminal styling for colorful output
 - **inquirer**: Interactive CLI prompts
-- **fracturedjsonjs**: Human-readable JSON formatting
 - **@biomejs/biome**: The Biome toolchain itself
+- **fracturedjsonjs**: Installed in the target project when FracturedJson formatting is enabled (not a dependency of biome-setup itself)
 
 ## CI/CD
 

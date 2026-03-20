@@ -8,11 +8,6 @@ const inquirer = inquirerModule.default || inquirerModule
 // Chalk v5 is ESM-only; fall back to .default when required from CJS.
 const chalkModule = require("chalk")
 const chalk = chalkModule.default || chalkModule
-const {
-  Formatter: FracturedFormatter,
-  FracturedJsonOptions,
-  EolStyle,
-} = require("fracturedjsonjs")
 
 const BIOME_VERSION = "2.4.8"
 const BIOME_SCHEMA_URL = `https://biomejs.dev/schemas/${BIOME_VERSION}/schema.json`
@@ -20,6 +15,7 @@ const PROJECT_ROOT = process.cwd()
 const PATHS = Object.freeze({
   packageJson: path.join(PROJECT_ROOT, "package.json"),
   biomeConfig: path.join(PROJECT_ROOT, "biome.json"),
+  formatJsonScript: path.join(PROJECT_ROOT, "format-json.js"),
 })
 
 function findUpwards(filenames) {
@@ -117,8 +113,6 @@ const CODE_EXTENSIONS = new Set([
   ".svelte",
   ".astro",
 ])
-
-const JSON_EXTENSIONS = new Set([".json", ".jsonc"])
 
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
@@ -363,6 +357,89 @@ function installBiome(pmConfig) {
   runCommand(command)
 }
 
+function installFracturedJson(pmConfig) {
+  const command = pmConfig.buildInstallCommand("fracturedjsonjs")
+  console.log("")
+  logger.success("Installing FracturedJson...")
+  runCommand(command)
+}
+
+function writeFormatJsonScript() {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const {
+  Formatter,
+  FracturedJsonOptions,
+  EolStyle,
+} = require("fracturedjsonjs")
+
+const JSON_EXTENSIONS = new Set([".json", ".jsonc"])
+
+const IGNORED_DIRECTORIES = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".cache",
+  ".vscode",
+  ".idea",
+  ".next",
+])
+
+const options = new FracturedJsonOptions()
+options.MaxTotalLineLength = 80
+options.MaxInlineComplexity = 1
+options.MaxCompactArrayComplexity = 2
+options.IndentSpaces = 2
+options.JsonEolStyle = EolStyle.Lf
+
+const formatter = new Formatter()
+formatter.Options = options
+
+let filesScanned = 0
+let filesFormatted = 0
+
+function walk(directory) {
+  const entries = fs.readdirSync(directory, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name)
+
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRECTORIES.has(entry.name)) continue
+      walk(entryPath)
+      continue
+    }
+
+    if (!entry.isFile()) continue
+    if (!JSON_EXTENSIONS.has(path.extname(entryPath))) continue
+
+    filesScanned += 1
+    try {
+      const original = fs.readFileSync(entryPath, "utf8")
+      const formatted = formatter.Reformat(original)
+      if (formatted !== original) {
+        fs.writeFileSync(entryPath, formatted)
+        filesFormatted += 1
+      }
+    } catch (_) {
+      // skip files that aren't valid JSON
+    }
+  }
+}
+
+walk(process.cwd())
+console.log(
+  \`FracturedJson: formatted \${filesFormatted} of \${filesScanned} JSON files.\`,
+)
+`
+  fs.writeFileSync(PATHS.formatJsonScript, script)
+  logger.success("Created format-json.js script")
+}
+
 function createBiomeConfig(projectType, options = {}) {
   const includes = [
     "**",
@@ -531,11 +608,12 @@ function writeBiomeConfig(projectType, configOptions = {}) {
   }
 }
 
-function updatePackageJsonScripts(pmConfig) {
+function updatePackageJsonScripts(pmConfig, options = {}) {
   const pkg = readPackageJson()
   pkg.scripts = pkg.scripts || {}
 
   const isTs = isTypescriptProject(pkg)
+  const fjSuffix = options.fracturedJson ? " && node format-json.js" : ""
 
   console.log("")
   logger.step(
@@ -546,11 +624,11 @@ function updatePackageJsonScripts(pmConfig) {
     pkg.scripts["type-check"] = "tsc --noEmit"
     pkg.scripts.lint = `biome lint --diagnostic-level=error --no-errors-on-unmatched && ${pmConfig.id} run type-check`
     pkg.scripts["lint:fix"] =
-      `biome check --write --unsafe && ${pmConfig.id} run type-check`
+      `biome check --write --unsafe && ${pmConfig.id} run type-check${fjSuffix}`
   } else {
     pkg.scripts.lint =
       "biome lint --diagnostic-level=error --no-errors-on-unmatched"
-    pkg.scripts["lint:fix"] = "biome check --write --unsafe"
+    pkg.scripts["lint:fix"] = `biome check --write --unsafe${fjSuffix}`
   }
 
   writePackageJson(pkg)
@@ -627,62 +705,6 @@ function walkAndCleanComments(rootDir) {
     filesTouched,
     totalCommentsRemoved,
   }
-}
-
-function createFracturedJsonFormatter() {
-  const options = new FracturedJsonOptions()
-  options.MaxTotalLineLength = 80
-  options.MaxInlineComplexity = 1
-  options.MaxCompactArrayComplexity = 2
-  options.IndentSpaces = 2
-  options.JsonEolStyle = EolStyle.Lf
-  const formatter = new FracturedFormatter()
-  formatter.Options = options
-  return formatter
-}
-
-function isJsonFile(filePath) {
-  return JSON_EXTENSIONS.has(path.extname(filePath))
-}
-
-function walkAndFormatJson(rootDir) {
-  const pkg = readPackageJson()
-  const formatter = createFracturedJsonFormatter()
-  let filesScanned = 0
-  let filesFormatted = 0
-
-  function walk(directory) {
-    const entries = fs.readdirSync(directory, { withFileTypes: true })
-
-    entries.forEach((entry) => {
-      const entryPath = path.join(directory, entry.name)
-
-      if (entry.isDirectory()) {
-        if (shouldIgnoreDir(entry.name, pkg)) return
-        walk(entryPath)
-        return
-      }
-
-      if (!entry.isFile()) return
-      if (!isJsonFile(entryPath)) return
-
-      filesScanned += 1
-      try {
-        const original = fs.readFileSync(entryPath, "utf8")
-        const formatted = formatter.Reformat(original)
-        if (formatted !== original) {
-          fs.writeFileSync(entryPath, formatted)
-          filesFormatted += 1
-        }
-      } catch (_) {
-        // skip files that aren't valid JSON
-      }
-    })
-  }
-
-  walk(rootDir)
-
-  return { filesScanned, filesFormatted }
 }
 
 function printSummary(pmConfig, projectType, legacyPackages, commentStats) {
@@ -782,20 +804,15 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
     }
   }
 
-  updatePackageJsonScripts(pmConfig)
+  if (useFracturedJson) {
+    installFracturedJson(pmConfig)
+    writeFormatJsonScript()
+  }
+  updatePackageJsonScripts(pmConfig, { fracturedJson: useFracturedJson })
 
   logger.step("Running lint:fix to apply Biome fixes...")
   runCommand(pmConfig.lint.fix)
   logger.success("Completed lint:fix.")
-
-  if (useFracturedJson) {
-    console.log("")
-    logger.step("Formatting JSON files with FracturedJson...")
-    const jsonStats = walkAndFormatJson(PROJECT_ROOT)
-    logger.success(
-      `Formatted ${jsonStats.filesFormatted} of ${jsonStats.filesScanned} JSON files.`,
-    )
-  }
 
   console.log("")
   console.log(chalk.cyan("==============================================="))
@@ -907,10 +924,16 @@ async function main() {
     }
 
     installBiome(pmConfig)
+    if (answers.useFracturedJson) {
+      installFracturedJson(pmConfig)
+      writeFormatJsonScript()
+    }
     writeBiomeConfig(projectType, {
       fracturedJson: answers.useFracturedJson,
     })
-    updatePackageJsonScripts(pmConfig)
+    updatePackageJsonScripts(pmConfig, {
+      fracturedJson: answers.useFracturedJson,
+    })
 
     let commentStats = {
       filesScanned: 0,
@@ -930,17 +953,6 @@ async function main() {
     logger.step("Running lint:fix to apply Biome fixes...")
     runCommand(pmConfig.lint.fix)
     logger.success("Completed lint:fix.")
-
-    let jsonStats = { filesScanned: 0, filesFormatted: 0 }
-
-    if (answers.useFracturedJson) {
-      console.log("")
-      logger.step("Formatting JSON files with FracturedJson...")
-      jsonStats = walkAndFormatJson(PROJECT_ROOT)
-      logger.success(
-        `Formatted ${jsonStats.filesFormatted} of ${jsonStats.filesScanned} JSON files.`,
-      )
-    }
 
     printSummary(pmConfig, projectType, legacyPackages, commentStats)
   } catch (error) {

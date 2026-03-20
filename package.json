@@ -33,7 +33,6 @@
   },
   "dependencies": {
     "chalk": "^5.6.2",
-    "fracturedjsonjs": "^5.0.1",
     "inquirer": "^13.0.2"
   },
   "devDependencies": {
