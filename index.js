@@ -16,6 +16,7 @@ const PATHS = Object.freeze({
   packageJson: path.join(PROJECT_ROOT, "package.json"),
   biomeConfig: path.join(PROJECT_ROOT, "biome.json"),
   formatJsonScript: path.join(PROJECT_ROOT, "format-json.js"),
+  lefthookConfig: path.join(PROJECT_ROOT, "lefthook.yml"),
 })
 
 function findUpwards(filenames) {
@@ -364,6 +365,26 @@ function installFracturedJson(pmConfig) {
   runCommand(command)
 }
 
+function installLefthook(pmConfig) {
+  const command = pmConfig.buildInstallCommand("lefthook")
+  console.log("")
+  logger.success("Installing Lefthook...")
+  runCommand(command)
+}
+
+function writeLefthookConfig() {
+  const config = [
+    "pre-commit:",
+    "  commands:",
+    "    lint-fix:",
+    '      glob: "*.{js,jsx,ts,tsx,json,css}"',
+    '      run: "npx @biomejs/biome lint --fix --no-errors-on-unmatched {staged_files} && git add {staged_files}"',
+    "",
+  ].join("\n")
+  fs.writeFileSync(PATHS.lefthookConfig, config)
+  logger.success("Created lefthook.yml with pre-commit lint:fix hook.")
+}
+
 function writeFormatJsonScript() {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs")
@@ -707,7 +728,7 @@ function walkAndCleanComments(rootDir) {
   }
 }
 
-function printSummary(pmConfig, projectType, legacyPackages, commentStats) {
+function printSummary(pmConfig, projectType, legacyPackages, commentStats, options = {}) {
   console.log("")
   console.log(chalk.cyan("==============================================="))
   console.log(chalk.cyan("                    Summary"))
@@ -716,6 +737,9 @@ function printSummary(pmConfig, projectType, legacyPackages, commentStats) {
   console.log(`Project type: ${projectType}`)
   console.log(`Package manager: ${pmConfig.id}`)
   console.log(`Biome version: ${BIOME_VERSION}`)
+  if (options.useLefthook) {
+    console.log("Git hooks: Lefthook (pre-commit lint:fix + git add)")
+  }
   console.log("")
   console.log(`Legacy ESLint/Prettier packages found: ${legacyPackages.length}`)
   console.log(`Files scanned for ESLint comments: ${commentStats.filesScanned}`)
@@ -758,6 +782,7 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   const projectType = inferProjectType(pkg)
 
   let useFracturedJson = false
+  let useLefthook = false
   if (upgradeMode === "full") {
     const fjAnswer = await inquirer.prompt([
       {
@@ -769,6 +794,19 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
       },
     ])
     useFracturedJson = fjAnswer.useFracturedJson
+
+    if (!fs.existsSync(PATHS.lefthookConfig)) {
+      const lhAnswer = await inquirer.prompt([
+        {
+          type: "confirm",
+          name: "useLefthook",
+          message:
+            "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)",
+          default: true,
+        },
+      ])
+      useLefthook = lhAnswer.useLefthook
+    }
   }
 
   installBiome(pmConfig)
@@ -810,6 +848,14 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   }
   updatePackageJsonScripts(pmConfig, { fracturedJson: useFracturedJson })
 
+  if (useLefthook) {
+    installLefthook(pmConfig)
+    writeLefthookConfig()
+    logger.step("Registering Lefthook git hooks...")
+    runCommand("npx lefthook install")
+    logger.success("Lefthook pre-commit hook installed.")
+  }
+
   logger.step("Running lint:fix to apply Biome fixes...")
   runCommand(pmConfig.lint.fix)
   logger.success("Completed lint:fix.")
@@ -827,6 +873,9 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   )
   if (useFracturedJson) {
     console.log("JSON formatting: FracturedJson")
+  }
+  if (useLefthook) {
+    console.log("Git hooks: Lefthook (pre-commit lint:fix + git add)")
   }
   console.log("")
 }
@@ -853,6 +902,13 @@ async function promptForSetup(legacyPackages) {
       message:
         "Use FracturedJson for JSON formatting? (intelligent inline/multi-line decisions, table-like alignment)",
       default: false,
+    },
+    {
+      type: "confirm",
+      name: "useLefthook",
+      message:
+        "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)",
+      default: true,
     },
   ])
 }
@@ -935,6 +991,14 @@ async function main() {
       fracturedJson: answers.useFracturedJson,
     })
 
+    if (answers.useLefthook) {
+      installLefthook(pmConfig)
+      writeLefthookConfig()
+      logger.step("Registering Lefthook git hooks...")
+      runCommand("npx lefthook install")
+      logger.success("Lefthook pre-commit hook installed.")
+    }
+
     let commentStats = {
       filesScanned: 0,
       filesTouched: 0,
@@ -954,7 +1018,9 @@ async function main() {
     runCommand(pmConfig.lint.fix)
     logger.success("Completed lint:fix.")
 
-    printSummary(pmConfig, projectType, legacyPackages, commentStats)
+    printSummary(pmConfig, projectType, legacyPackages, commentStats, {
+      useLefthook: answers.useLefthook,
+    })
   } catch (error) {
     if (error instanceof CliError) {
       logger.error(error.message)

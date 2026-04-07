@@ -15,6 +15,7 @@ Biome is a fast toolchain for the web that replaces ESLint, Prettier, and other 
 - ⚙️ **Project Detection**: Automatically detects your project type (React or Node.js)
 - 🎯 **TypeScript Support**: Full TypeScript support for modern projects
 - 📄 **FracturedJson Formatting**: Optional human-readable JSON formatting with intelligent inline/multi-line decisions and table-like alignment
+- 🪝 **Lefthook Integration**: Optional pre-commit hook that auto-fixes lint issues and stages corrected files
 
 ## Installation
 
@@ -39,13 +40,26 @@ The tool will guide you through:
 2. Removing ESLint/Prettier packages and directive comments
 3. Installing Biome and generating a `biome.json` configuration file
 4. Optionally enabling FracturedJson for human-readable JSON formatting
-5. Updating `package.json` scripts and running an initial lint fix
+5. Optionally installing Lefthook with a pre-commit hook for lint:fix
+6. Updating `package.json` scripts and running an initial lint fix
 
 ### Existing Biome project
 
 If Biome is already installed, the tool detects the current version and offers:
 - **Update version only** — upgrades the `@biomejs/biome` dependency and updates the `$schema` URL in your existing `biome.json`, keeping all your custom rules intact
-- **Update version + overwrite config** — upgrades the dependency and replaces `biome.json` with the recommended opinionated configuration (with optional FracturedJson formatting)
+- **Update version + overwrite config** — upgrades the dependency and replaces `biome.json` with the recommended opinionated configuration (with optional FracturedJson formatting and Lefthook setup)
+
+### Lefthook pre-commit hook
+
+When enabled (default: **yes**), [Lefthook](https://github.com/evilmartians/lefthook) is installed and configured with a `pre-commit` hook that:
+
+1. Runs `biome lint --fix` on staged files to auto-correct lint issues
+2. Re-stages the corrected files with `git add` so fixes are included in the current commit
+
+The tool will:
+1. Install `lefthook` as a devDependency in your project
+2. Generate a `lefthook.yml` configuration at your project root
+3. Run `lefthook install` to register the git hook in `.git/hooks`
 
 ### FracturedJson formatting
 
@@ -104,6 +118,7 @@ You can manually edit the `biome.json` file to customize Biome's behavior for yo
 - **inquirer**: Interactive CLI prompts
 - **@biomejs/biome**: The Biome toolchain itself
 - **fracturedjsonjs**: Installed in the target project when FracturedJson formatting is enabled (not a dependency of biome-setup itself)
+- **lefthook**: Installed in the target project when Lefthook integration is enabled (not a dependency of biome-setup itself)
 
 ## CI/CD
 
