@@ -16,6 +16,7 @@ Biome is a fast toolchain for the web that replaces ESLint, Prettier, and other 
 - 🎯 **TypeScript Support**: Full TypeScript support for modern projects
 - 📄 **FracturedJson Formatting**: Optional human-readable JSON formatting with intelligent inline/multi-line decisions and table-like alignment
 - 🪝 **Lefthook Integration**: Optional pre-commit hook that auto-fixes lint issues and stages corrected files
+- 🐶 **Husky Migration**: Automatically detects Husky, removes it completely, and migrates existing hooks to Lefthook
 
 ## Installation
 
@@ -60,6 +61,17 @@ The tool will:
 1. Install `lefthook` as a devDependency in your project
 2. Generate a `lefthook.yml` configuration at your project root
 3. Run `lefthook install` to register the git hook in `.git/hooks`
+
+#### Husky migration
+
+If your project already uses [Husky](https://github.com/typicode/husky), the tool will automatically:
+
+1. **Detect** Husky via the `.husky` directory, the `husky` package in dependencies, or the `husky` field in `package.json`
+2. **Read** existing hook scripts (e.g. `pre-commit`, `commit-msg`, `pre-push`) and extract the commands
+3. **Remove** Husky completely — uninstalls the package, deletes the `.husky` directory, removes the `prepare` script and `husky` config from `package.json`
+4. **Migrate** extracted commands into `lefthook.yml`, skipping redundant ESLint/Prettier/lint-staged commands that Biome replaces
+
+This ensures a seamless transition without losing any custom hooks you had configured.
 
 ### FracturedJson formatting
 

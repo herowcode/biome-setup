@@ -101,6 +101,8 @@ function shouldIgnoreNextDirectory(pkg) {
   return hasNextBuildDirectory() || hasNextJsDependency(pkg)
 }
 
+const HUSKY_HOOKS_DIR = path.join(PROJECT_ROOT, ".husky")
+
 const LEGACY_TOOL_PATTERN = /(eslint|prettier)/i
 
 const CODE_EXTENSIONS = new Set([
@@ -372,7 +374,168 @@ function installLefthook(pmConfig) {
   runCommand(command)
 }
 
-function writeLefthookConfig() {
+function detectHusky(pkg) {
+  const hasHuskyDir = fs.existsSync(HUSKY_HOOKS_DIR)
+  const dependencyFields = [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]
+  const hasHuskyPackage = dependencyFields.some((field) =>
+    Boolean(pkg[field]?.husky),
+  )
+  const hasHuskyConfig = Boolean(pkg.husky)
+
+  return {
+    installed: hasHuskyDir || hasHuskyPackage || hasHuskyConfig,
+    hasDir: hasHuskyDir,
+    hasPackage: hasHuskyPackage,
+    hasConfig: hasHuskyConfig,
+  }
+}
+
+function readHuskyHooks() {
+  const hooks = {}
+
+  if (!fs.existsSync(HUSKY_HOOKS_DIR)) return hooks
+
+  const entries = fs.readdirSync(HUSKY_HOOKS_DIR, { withFileTypes: true })
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    if (entry.name.startsWith("_") || entry.name.startsWith(".")) continue
+
+    const hookPath = path.join(HUSKY_HOOKS_DIR, entry.name)
+    const content = fs.readFileSync(hookPath, "utf8")
+
+    const commands = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line &&
+          !line.startsWith("#") &&
+          !line.startsWith("#!/") &&
+          !line.includes("husky.sh") &&
+          line !== "." &&
+          !line.startsWith('"$') &&
+          !line.startsWith('. "'),
+      )
+
+    if (commands.length > 0) {
+      hooks[entry.name] = commands
+    }
+  }
+
+  return hooks
+}
+
+function removeHusky(pmConfig, pkg) {
+  logger.step("Removing Husky...")
+
+  // Remove husky package
+  const dependencyFields = [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]
+  const hasHuskyPackage = dependencyFields.some((field) =>
+    Boolean(pkg[field]?.husky),
+  )
+
+  if (hasHuskyPackage) {
+    runCommand(pmConfig.buildUninstallCommand(["husky"]))
+  }
+
+  // Remove husky config from package.json
+  const freshPkg = readPackageJson()
+  let changed = false
+  if (freshPkg.husky) {
+    delete freshPkg.husky
+    changed = true
+  }
+  // Remove prepare script if it only runs husky
+  if (
+    freshPkg.scripts?.prepare &&
+    freshPkg.scripts.prepare.trim() === "husky"
+  ) {
+    delete freshPkg.scripts.prepare
+    changed = true
+  }
+  if (changed) {
+    writePackageJson(freshPkg)
+    logger.success("Removed Husky configuration from package.json.")
+  }
+
+  // Remove .husky directory
+  if (fs.existsSync(HUSKY_HOOKS_DIR)) {
+    fs.rmSync(HUSKY_HOOKS_DIR, { recursive: true, force: true })
+    logger.success("Removed .husky directory.")
+  }
+}
+
+function buildLefthookConfigWithHuskyHooks(huskyHooks) {
+  const lines = []
+  const hookNames = Object.keys(huskyHooks)
+
+  // Always ensure pre-commit has our lint-fix command
+  const preCommitCommands = []
+  preCommitCommands.push(
+    "    lint-fix:",
+    '      glob: "*.{js,jsx,ts,tsx,json,css}"',
+    '      run: "npx @biomejs/biome lint --fix --no-errors-on-unmatched {staged_files} && git add {staged_files}"',
+  )
+
+  // Migrate non-lint commands from husky pre-commit
+  if (huskyHooks["pre-commit"]) {
+    let migrated = 0
+    for (const cmd of huskyHooks["pre-commit"]) {
+      // Skip lint/prettier/eslint commands — Biome replaces them
+      if (/\b(eslint|prettier|lint-staged|biome)\b/i.test(cmd)) continue
+      migrated += 1
+      preCommitCommands.push(
+        `    migrated-${migrated}:`,
+        `      run: "${cmd.replace(/"/g, '\\"')}"`,
+      )
+    }
+  }
+
+  lines.push("pre-commit:", "  commands:", ...preCommitCommands)
+
+  // Migrate other hooks (commit-msg, pre-push, etc.)
+  for (const hookName of hookNames) {
+    if (hookName === "pre-commit") continue
+
+    const commands = huskyHooks[hookName]
+    lines.push("", `${hookName}:`, "  commands:")
+
+    let idx = 0
+    for (const cmd of commands) {
+      idx += 1
+      lines.push(
+        `    migrated-${idx}:`,
+        `      run: "${cmd.replace(/"/g, '\\"')}"`,
+      )
+    }
+  }
+
+  lines.push("")
+  return lines.join("\n")
+}
+
+function writeLefthookConfig(huskyHooks) {
+  if (huskyHooks && Object.keys(huskyHooks).length > 0) {
+    const config = buildLefthookConfigWithHuskyHooks(huskyHooks)
+    fs.writeFileSync(PATHS.lefthookConfig, config)
+    const hookCount = Object.values(huskyHooks).flat().length
+    logger.success(
+      `Created lefthook.yml with pre-commit lint:fix hook + ${hookCount} migrated Husky command(s).`,
+    )
+    return
+  }
+
   const config = [
     "pre-commit:",
     "  commands:",
@@ -575,8 +738,11 @@ function createBiomeConfig(projectType, options = {}) {
       ...(() => {
         const formatterIncludes = []
         if (options.ignoreNextDirectory) formatterIncludes.push("!**/.next/**")
-        if (options.fracturedJson) formatterIncludes.push("!**/*.json", "!**/*.jsonc")
-        return formatterIncludes.length > 0 ? { includes: formatterIncludes } : {}
+        if (options.fracturedJson)
+          formatterIncludes.push("!**/*.json", "!**/*.jsonc")
+        return formatterIncludes.length > 0
+          ? { includes: formatterIncludes }
+          : {}
       })(),
     },
     javascript: {
@@ -728,7 +894,13 @@ function walkAndCleanComments(rootDir) {
   }
 }
 
-function printSummary(pmConfig, projectType, legacyPackages, commentStats, options = {}) {
+function printSummary(
+  pmConfig,
+  projectType,
+  legacyPackages,
+  commentStats,
+  options = {},
+) {
   console.log("")
   console.log(chalk.cyan("==============================================="))
   console.log(chalk.cyan("                    Summary"))
@@ -738,7 +910,10 @@ function printSummary(pmConfig, projectType, legacyPackages, commentStats, optio
   console.log(`Package manager: ${pmConfig.id}`)
   console.log(`Biome version: ${BIOME_VERSION}`)
   if (options.useLefthook) {
-    console.log("Git hooks: Lefthook (pre-commit lint:fix + git add)")
+    const hookLabel = options.huskyMigrated
+      ? "Git hooks: Lefthook (pre-commit lint:fix + git add) — migrated from Husky"
+      : "Git hooks: Lefthook (pre-commit lint:fix + git add)"
+    console.log(hookLabel)
   }
   console.log("")
   console.log(`Legacy ESLint/Prettier packages found: ${legacyPackages.length}`)
@@ -781,6 +956,7 @@ async function promptForUpgrade(currentVersion) {
 async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   const projectType = inferProjectType(pkg)
 
+  const husky = detectHusky(pkg)
   let useFracturedJson = false
   let useLefthook = false
   if (upgradeMode === "full") {
@@ -796,12 +972,30 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
     useFracturedJson = fjAnswer.useFracturedJson
 
     if (!fs.existsSync(PATHS.lefthookConfig)) {
+      const lefthookMessage = husky.installed
+        ? "Install Lefthook and configure a pre-commit hook for lint:fix? (Husky will be removed and existing hooks migrated)"
+        : "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)"
+
+      if (husky.installed) {
+        const huskyHooks = readHuskyHooks()
+        const hookNames = Object.keys(huskyHooks)
+        if (hookNames.length > 0) {
+          logger.warn(
+            "Husky detected — existing hooks will be migrated to Lefthook.",
+          )
+          logger.info(`  Husky hooks found: ${hookNames.join(", ")}`)
+        } else {
+          logger.warn(
+            "Husky detected — it will be removed if you choose Lefthook.",
+          )
+        }
+      }
+
       const lhAnswer = await inquirer.prompt([
         {
           type: "confirm",
           name: "useLefthook",
-          message:
-            "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)",
+          message: lefthookMessage,
           default: true,
         },
       ])
@@ -849,8 +1043,13 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   updatePackageJsonScripts(pmConfig, { fracturedJson: useFracturedJson })
 
   if (useLefthook) {
+    let huskyHooks = null
+    if (husky.installed) {
+      huskyHooks = readHuskyHooks()
+      removeHusky(pmConfig, readPackageJson())
+    }
     installLefthook(pmConfig)
-    writeLefthookConfig()
+    writeLefthookConfig(huskyHooks)
     logger.step("Registering Lefthook git hooks...")
     runCommand("npx lefthook install")
     logger.success("Lefthook pre-commit hook installed.")
@@ -867,7 +1066,9 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
   console.log("")
   console.log(`Project type: ${projectType}`)
   console.log(`Package manager: ${pmConfig.id}`)
-  console.log(`Biome upgraded: ${chalk.yellow(pkg._biomeCurrentVersion)} → ${chalk.green(BIOME_VERSION)}`)
+  console.log(
+    `Biome upgraded: ${chalk.yellow(pkg._biomeCurrentVersion)} → ${chalk.green(BIOME_VERSION)}`,
+  )
   console.log(
     `Config: ${upgradeMode === "full" ? "overwritten with recommended config" : "kept existing (schema URL updated)"}`,
   )
@@ -875,12 +1076,19 @@ async function runUpgradeFlow(pmConfig, pkg, upgradeMode) {
     console.log("JSON formatting: FracturedJson")
   }
   if (useLefthook) {
-    console.log("Git hooks: Lefthook (pre-commit lint:fix + git add)")
+    const hookLabel = husky.installed
+      ? "Git hooks: Lefthook (pre-commit lint:fix + git add) — migrated from Husky"
+      : "Git hooks: Lefthook (pre-commit lint:fix + git add)"
+    console.log(hookLabel)
   }
   console.log("")
 }
 
-async function promptForSetup(legacyPackages) {
+async function promptForSetup(legacyPackages, huskyDetected) {
+  const lefthookMessage = huskyDetected
+    ? "Install Lefthook and configure a pre-commit hook for lint:fix? (Husky will be removed and existing hooks migrated)"
+    : "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)"
+
   return inquirer.prompt([
     {
       type: "confirm",
@@ -906,8 +1114,7 @@ async function promptForSetup(legacyPackages) {
     {
       type: "confirm",
       name: "useLefthook",
-      message:
-        "Install Lefthook and configure a pre-commit hook for lint:fix? (auto-fixes and stages corrected files)",
+      message: lefthookMessage,
       default: true,
     },
   ])
@@ -951,6 +1158,7 @@ async function main() {
 
     const legacyPackages = findLegacyTools(pkg)
     const projectType = inferProjectType(pkg)
+    const husky = detectHusky(pkg)
 
     logger.info(
       `Found ESLint/Prettier related packages: ${chalk.bold(
@@ -960,10 +1168,20 @@ async function main() {
     if (legacyPackages.length > 0) {
       logger.info(`  ${legacyPackages.join(", ")}`)
     }
+    if (husky.installed) {
+      logger.warn("Husky detected — it will be removed if you choose Lefthook.")
+      const huskyHooks = readHuskyHooks()
+      const hookNames = Object.keys(huskyHooks)
+      if (hookNames.length > 0) {
+        logger.info(
+          `  Husky hooks found: ${hookNames.join(", ")} (will be migrated to Lefthook)`,
+        )
+      }
+    }
     logger.info(`Project type selected: ${chalk.bold(projectType)}`)
     console.log("")
 
-    const answers = await promptForSetup(legacyPackages)
+    const answers = await promptForSetup(legacyPackages, husky.installed)
 
     if (legacyPackages.length > 0 && answers.removeLegacy) {
       uninstallLegacyTools(pmConfig, legacyPackages)
@@ -992,8 +1210,13 @@ async function main() {
     })
 
     if (answers.useLefthook) {
+      let huskyHooks = null
+      if (husky.installed) {
+        huskyHooks = readHuskyHooks()
+        removeHusky(pmConfig, readPackageJson())
+      }
       installLefthook(pmConfig)
-      writeLefthookConfig()
+      writeLefthookConfig(huskyHooks)
       logger.step("Registering Lefthook git hooks...")
       runCommand("npx lefthook install")
       logger.success("Lefthook pre-commit hook installed.")
@@ -1020,6 +1243,7 @@ async function main() {
 
     printSummary(pmConfig, projectType, legacyPackages, commentStats, {
       useLefthook: answers.useLefthook,
+      huskyMigrated: answers.useLefthook && husky.installed,
     })
   } catch (error) {
     if (error instanceof CliError) {
