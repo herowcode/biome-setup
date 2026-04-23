@@ -541,7 +541,7 @@ function writeLefthookConfig(huskyHooks) {
     "  commands:",
     "    lint-fix:",
     '      glob: "*.{js,jsx,ts,tsx,json,css}"',
-    '      run: "npx @biomejs/biome lint --fix --no-errors-on-unmatched {staged_files} && git add {staged_files}"',
+    '      run: "pnpm biome check --write --unsafe --no-errors-on-unmatched {staged_files} && git add {staged_files}"',
     "",
   ].join("\n")
   fs.writeFileSync(PATHS.lefthookConfig, config)
