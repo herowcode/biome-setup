@@ -9,7 +9,7 @@ const inquirer = inquirerModule.default || inquirerModule
 const chalkModule = require("chalk")
 const chalk = chalkModule.default || chalkModule
 
-const BIOME_VERSION = "2.4.8"
+const BIOME_VERSION = "2.4.16"
 const BIOME_SCHEMA_URL = `https://biomejs.dev/schemas/${BIOME_VERSION}/schema.json`
 const PROJECT_ROOT = process.cwd()
 const PATHS = Object.freeze({
